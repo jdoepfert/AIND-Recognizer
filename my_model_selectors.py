@@ -104,5 +104,27 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        split_method = KFold(2)
+        possible_n_components = list(range(self.min_n_components,
+                                           self.max_n_components+1))
+        scores = []
+        for n_components in possible_n_components:
+            cv_score = 0
+            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+
+                # training
+                self.X, self.lengths = combine_sequences(cv_train_idx, self.sequences)
+                model = self.base_model(n_components)
+
+                # testing
+                X, lengths = combine_sequences(cv_test_idx, self.sequences)
+                try:
+                    cv_score += model.score(X, lengths)
+                except Exception as e:
+                    print("n = {}: Scoring did not work due to exception '{}'".format(n_components, e))
+                    print("Set score to -Inf")
+                    cv_score = -float('Inf')
+            scores.append(cv_score)
+
+        best_num_components = possible_n_components[scores.index(max(scores))]
+        return self.base_model(best_num_components)
