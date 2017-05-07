@@ -76,7 +76,7 @@ class SelectorBIC(ModelSelector):
     p = n*(n-1) + n*(2*m)
     """
 
-    def select(self):
+    def select(self, verbose=False):
         """ select the best model for self.this_word based on
         BIC score for n between self.min_n_components and self.max_n_components
 
@@ -89,20 +89,22 @@ class SelectorBIC(ModelSelector):
                                            self.max_n_components+1))
         scores = []
         for n_components in possible_n_components:
-            model = self.base_model(n_components)
             try:
+                model = self.base_model(n_components)
                 logL = model.score(self.X, self.lengths)
+                n = model.n_components  # equals `n_components`
+                m = model.n_features
+                p = n*(n-1) + n*(2*m)  # see class docstring
+                N = len(self.X)  # each feature vector in `X` is a data point
+                logN = np.log(N)
+                BIC = -2 * logL + p * logN
             except Exception as e:
-                print("n = {}: Scoring did not work due to exception '{}'".format(n_components, e))
-                print("Set logL to -Inf")
-                logL = -float('Inf')
-            n = model.n_components  # equals `n_components`
-            m = model.n_features
-            p = n*(n-1) + n*(2*m)  # see class docstring
-            N = len(self.X)  # each feature vector in `X` is a data point
-            logN = np.log(N)
-            BIC = -2 * logL + p * logN
+                if verbose:
+                    print("n = {}: Exception '{}'".format(n_components, e))
+                    print("Set BIC to Inf")
+                BIC = float('Inf')
             scores.append(BIC)
+
         best_num_components = possible_n_components[scores.index(min(scores))]
         return self.base_model(best_num_components)
 
@@ -118,7 +120,7 @@ class SelectorDIC(ModelSelector):
     log(P(X(i)): log likelihood of word i
     '''
 
-    def select(self):
+    def select(self, verbose=False):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         possible_n_components = list(range(self.min_n_components,
@@ -126,27 +128,20 @@ class SelectorDIC(ModelSelector):
         M = len(self.hwords.keys())  # number of classes/words
         scores = []
         for n_components in possible_n_components:
-            model = self.base_model(n_components)
             try:
+                model = self.base_model(n_components)
                 logL = model.score(self.X, self.lengths)
+                other_words = [w for w in self.hwords.keys() if self.this_word != w]
+                sum_anti_likelihoods = 0
+                for word in other_words:
+                    X, lengths = self.hwords[word]
+                    sum_anti_likelihoods += model.score(X, lengths)
+                DIC = logL - 1/(M - 1) * sum_anti_likelihoods
             except Exception as e:
-                print("n = {}: Scoring did not work due to exception '{}'".format(n_components, e))
-                print("Set DIC to -Inf")
-                scores.append(float('-Inf'))
-                break
-
-            other_words = [w for w in self.hwords.keys() if self.this_word != w]
-            sum_anti_likelihoods = 0
-            for word in other_words:
-                X, lengths = self.hwords[word]
-                try:
-                   sum_anti_likelihoods += model.score(X, lengths)
-                except Exception as e:
-                    print("n = {}: Scoring did not work due to exception '{}'".format(n_components, e))
+                if verbose:
+                    print("n = {}: Exception '{}'".format(n_components, e))
                     print("Set DIC to -Inf")
-                    scores.append(float('-Inf'))
-                    break
-            DIC = logL - 1/(M - 1) * sum_anti_likelihoods
+                DIC = float('-Inf')
             scores.append(DIC)
 
         best_num_components = possible_n_components[scores.index(max(scores))]
@@ -158,7 +153,7 @@ class SelectorCV(ModelSelector):
 
     '''
 
-    def select(self):
+    def select(self, verbose=False):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         split_method = KFold(2)
@@ -167,24 +162,24 @@ class SelectorCV(ModelSelector):
         scores = []
         for n_components in possible_n_components:
             cv_score = 0
-            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
 
-                # training
-                self.X, self.lengths = combine_sequences(cv_train_idx, self.sequences)
-                model = self.base_model(n_components)
+                    # training
+                    self.X, self.lengths = combine_sequences(cv_train_idx, self.sequences)
+                    model = self.base_model(n_components)
 
-                # testing
-                X, lengths = combine_sequences(cv_test_idx, self.sequences)
-                try:
+                    # testing
+                    X, lengths = combine_sequences(cv_test_idx, self.sequences)
                     cv_score += model.score(X, lengths)
-                except Exception as e:
-                    print("n = {}: Scoring did not work due to exception '{}'".format(n_components, e))
-                    print("Set score to -Inf")
+            except Exception as e:
+                if verbose:
+                    print("n = {}: Exception '{}'".format(n_components, e))
+                    print("Set cv score to -Inf")
                     cv_score = -float('Inf')
             scores.append(cv_score)
 
         best_num_components = possible_n_components[scores.index(max(scores))]
-
         # reset self.X and self.lenghts to original value
         self.X, self.lengths = self.hwords[self.this_word]
         # return fitted model with best parameters
